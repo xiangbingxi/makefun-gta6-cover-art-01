@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vice Cover Studio — your photo as GTA-style cover art</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main class="app">
+  <section class="panel controls" aria-label="Cover editor">
+    <header>
+      <h1>VICE COVER<br>STUDIO</h1>
+      <p>One photo and a caption become a multi-panel cover in the Vice City sunset style. It all runs here in the browser — your photos never leave this machine.</p>
+    </header>
+
+    <fieldset>
+      <legend>Step 1 — Photos</legend>
+      <label class="upload">Hero photo <input type="file" id="photo-hero" accept="image/*"></label>
+      <label class="upload">Second panel <input type="file" id="photo-mid" accept="image/*"></label>
+      <label class="upload">Third panel <input type="file" id="photo-low" accept="image/*"></label>
+      <label class="check"><input type="checkbox" id="use-one"> Fill every panel with one photo</label>
+      <div class="row">
+        <span class="hint">No photo handy? Try a sample:</span>
+        <button type="button" data-sample="pier">Pier</button>
+        <button type="button" data-sample="boulevard">Boulevard</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Step 2 — Frame this panel</legend>
+      <div class="row" id="panel-tabs">
+        <button type="button" data-panel-tab="hero">Hero</button>
+        <button type="button" data-panel-tab="mid">Panel 2</button>
+        <button type="button" data-panel-tab="low">Panel 3</button>
+        <button type="button" data-panel-tab="far">Panel 4</button>
+      </div>
+      <label>Zoom <input type="range" id="zoom" min="1" max="2.5" step="0.05" value="1"> <output id="zoomVal">—</output></label>
+      <label>Focus, left to right <input type="range" id="focusX" min="0" max="100" value="50"></label>
+      <label>Focus, top to bottom <input type="range" id="focusY" min="0" max="100" value="38"></label>
+      <div class="row"><span id="focusVal">—</span></div>
+      <div class="row">
+        <button type="button" id="face-btn">Centre on face</button>
+        <label class="check"><input type="checkbox" id="auto-face" checked> Detect faces automatically</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Step 3 — Layout and grade</legend>
+      <div class="chips" id="layouts"></div>
+      <div class="chips" id="grades"></div>
+      <label class="check"><input type="checkbox" id="halftone" checked> Halftone print dots</label>
+      <label class="check"><input type="checkbox" id="grain" checked> Film grain</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Step 4 — Lettering</legend>
+      <label>Title <input type="text" id="title" maxlength="30" value="Sunset Heist"></label>
+      <label>Subtitle <input type="text" id="subtitle" maxlength="40" value="Leonida • Vice City"></label>
+      <label>Callout 1 <input type="text" id="callout1" maxlength="24" value="Golden hour"></label>
+      <label>Callout 2 <input type="text" id="callout2" maxlength="24" value="The getaway"></label>
+      <label class="check"><input type="checkbox" id="seal-toggle" checked> Round seal stamp</label>
+      <label>Seal wording <input type="text" id="seal-text" maxlength="40" value="VICE CITY • LEONIDA • EST. 2026 • "></label>
+      <label>Billing block <textarea id="billing" rows="2" maxlength="120">A LEONIDA STORY  •  STARRING YOU  •  SHOT ON THE BOULEVARD</textarea></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Step 5 — Export</legend>
+      <label>Size <select id="size"></select></label>
+      <button type="button" id="export" class="primary">Export PNG</button>
+      <button type="button" id="export-all">Export all three sizes</button>
+      <p id="status" role="status">Load a photo to start — or try a sample.</p>
+    </fieldset>
+  </section>
+  <section class="panel stage" aria-label="Live cover preview">
+    <canvas id="cover" width="880" height="880"></canvas>
+    <p class="stage-note">Live preview — what you see is the PNG you get.</p>
+  </section>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
