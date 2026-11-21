@@ -1,262 +1,247 @@
-// Vice Cover Studio — editor wiring.
-//
-// Connects the controls in index.html to the renderer: photo uploads,
-// per-panel crops with face-aware centring, layout / grade / lettering
-// controls, and PNG export in three post sizes.
-import { renderCover, defaultState, GRADES, LAYOUTS, EXPORT_SIZES } from './render.js';
+// Vice Cover Studio — wires the editor page: the photo slots, layout and
+// grade rows, lettering fields, zoom and focus sliders, and PNG export.
+// A `?shot=` query sets up a fixed scene for a screenshot instead
+// (see ./shots.js).
+import { paintCover, PALETTES, LAYOUTS } from './paint.js';
 import { runShot } from './shots.js';
 
 const canvas = document.getElementById('cover');
 const statusEl = document.getElementById('status');
-const state = defaultState();
-let currentSize = EXPORT_SIZES[0];
-let activePanel = 'hero';
-let autoFace = true;
 
-const $ = (id) => document.getElementById(id);
+const state = {
+  photos: [null, null, null],
+  faces: [null, null, null],
+  layout: 'grid',
+  grade: 'sunset',
+  title: 'Sunset Heist',
+  subtitle: 'A Leonida Story',
+  calloutA: 'Golden Hour',
+  calloutB: 'The Getaway',
+  billing: 'A LEONIDA STORY  •  STARRING YOU  •  SHOT ON THE BOULEVARD',
+  zoom: 1,
+  focusX: 0.5,
+  focusY: 0.5,
+  size: '1080x1080',
+};
 
-function imageFromUrl(url) {
+const SIZES = {
+  '1080x1080': [1080, 1080],
+  '1280x720': [1280, 720],
+  '1080x1350': [1080, 1350],
+  '1920x1080': [1920, 1080],
+};
+
+const LAYOUT_NAMES = { grid: 'Vice Grid', four: 'Leonida Four', hero: 'Sunset Hero' };
+const GRADE_NAMES = {
+  sunset: 'Vice Sunset',
+  neon: 'Neon Nights',
+  gold: 'Golden Mile',
+  noir: 'Palm Noir',
+  candy: 'Cotton Candy',
+};
+
+function repaint() {
+  paintCover(canvas, state);
+}
+
+function say(msg) {
+  if (statusEl) statusEl.textContent = msg;
+}
+
+/** Loads an image from a URL, resolving once it can be drawn. */
+export function loadImage(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('could not load image'));
+    img.onerror = () => reject(new Error('could not load ' + url));
     img.src = url;
   });
 }
 
-function previewDims() {
-  const scale = 880 / currentSize.w;
-  return { w: Math.round(currentSize.w * scale), h: Math.round(currentSize.h * scale) };
-}
-
-function repaint() {
-  const p = previewDims();
-  canvas.width = p.w;
-  canvas.height = p.h;
-  renderCover(canvas.getContext('2d'), p.w, p.h, state);
-}
-
-// Face-aware crop: Chrome's built-in FaceDetector when present, otherwise
-// the upper-third focus the renderer already defaults to.
+/** Where the browser offers FaceDetector, find the biggest face to frame. */
 async function findFace(img) {
-  if (!('FaceDetector' in window)) return null;
   try {
-    const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
-    const faces = await detector.detect(img);
-    if (!faces.length) return null;
-    const box = faces[0].boundingBox;
+    if (!('FaceDetector' in window)) return null;
+    const detector = new FaceDetector({ fastMode: true });
+    const found = await detector.detect(img);
+    if (!found || !found.length) return null;
+    let best = found[0];
+    for (const f of found) {
+      const a = f.boundingBox.width * f.boundingBox.height;
+      const b = best.boundingBox.width * best.boundingBox.height;
+      if (a > b) best = f;
+    }
+    const box = best.boundingBox;
     return {
-      fx: (box.x + box.width / 2) / img.naturalWidth,
-      fy: (box.y + box.height * 0.42) / img.naturalHeight,
+      x: box.x / img.naturalWidth,
+      y: box.y / img.naturalHeight,
+      w: box.width / img.naturalWidth,
+      h: box.height / img.naturalHeight,
     };
   } catch {
     return null;
   }
 }
 
-async function placePhoto(key, img, sourceName) {
-  const shot = { img, zoom: 1.15, fx: 0.5, fy: 0.38, face: null };
-  state.photos[key] = shot;
-  if (autoFace) {
-    const face = await findFace(img);
-    if (face) {
-      shot.face = face;
-      shot.fx = face.fx;
-      shot.fy = face.fy;
-      shot.zoom = 1.45;
-    }
+/** Sets photo slot i from a File, then re-detects the face and repaints. */
+async function setPhoto(i, file) {
+  if (!file) return;
+  const img = await loadImage(URL.createObjectURL(file));
+  state.photos[i] = img;
+  state.faces[i] = await findFace(img);
+  repaint();
+  say(`Photo ${i + 1} loaded${state.faces[i] ? ' — face found, framed on it' : ''}.`);
+}
+
+/** Builds a row of toggle buttons into an element, one per option. */
+function buildChoiceRow(el, options, current, onPick) {
+  el.innerHTML = '';
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = opt.label;
+    btn.dataset.value = opt.value;
+    btn.className = 'choice' + (opt.value === current ? ' active' : '');
+    btn.addEventListener('click', () => {
+      onPick(opt.value);
+      markChoices();
+      repaint();
+    });
+    el.appendChild(btn);
   }
-  syncCropUI();
-  repaint();
-  statusEl.textContent = `${key} photo set${sourceName ? ` — ${sourceName}` : ''}${shot.face ? ' (face found, centred)' : ''}.`;
 }
 
-function shotFor(key) {
-  return state.photos[key];
+/** Makes the layout/grade/size buttons show the state the URL applied. */
+function markChoices() {
+  const mark = (selector, value) => {
+    document.querySelectorAll(selector).forEach((b) => b.classList.toggle('active', b.dataset.value === value));
+  };
+  mark('#layouts .choice', state.layout);
+  mark('#grades .choice', state.grade);
+  mark('#sizes .choice', state.size);
 }
 
-function syncCropUI() {
-  const shot = shotFor(activePanel);
-  $('zoom').value = shot ? shot.zoom : 1;
-  $('zoomVal').textContent = shot ? `${shot.zoom.toFixed(2)}×` : '—';
-  $('focusX').value = shot ? Math.round(shot.fx * 100) : 50;
-  $('focusY').value = shot ? Math.round(shot.fy * 100) : 38;
-  $('focusVal').textContent = shot ? `${Math.round(shot.fx * 100)}, ${Math.round(shot.fy * 100)}` : '—';
-  const names = { hero: 'Hero', mid: 'Panel 2', low: 'Panel 3', far: 'Panel 4' };
-  document.querySelectorAll('[data-panel-tab]').forEach((b) => {
-    b.classList.toggle('on', b.dataset.panelTab === activePanel);
-    b.textContent = `${names[b.dataset.panelTab]}${shotFor(b.dataset.panelTab) ? ' ✓' : ''}`;
-  });
-}
-
-function readCropUI() {
-  const shot = shotFor(activePanel);
-  if (!shot) return;
-  shot.zoom = Number($('zoom').value);
-  shot.fx = Number($('focusX').value) / 100;
-  shot.fy = Number($('focusY').value) / 100;
-  syncCropUI();
-  repaint();
-}
-
-function savePNG(target) {
+/** Renders the cover at full size and downloads it as a PNG. */
+function exportSize(sizeKey) {
+  const dims = SIZES[sizeKey];
   const off = document.createElement('canvas');
-  off.width = target.w;
-  off.height = target.h;
-  renderCover(off.getContext('2d'), target.w, target.h, state);
+  off.width = dims[0];
+  off.height = dims[1];
+  paintCover(off, state);
   off.toBlob((blob) => {
     if (!blob) {
-      statusEl.textContent = 'Export failed.';
+      say('Export failed — the canvas was empty.');
       return;
     }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `vice-cover-${target.w}x${target.h}.png`;
+    a.download = `vice-cover-${sizeKey}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    statusEl.textContent = `Saved vice-cover-${target.w}x${target.h}.png (${target.w} × ${target.h}).`;
+    say(`Saved vice-cover-${sizeKey}.png`);
   }, 'image/png');
 }
 
-// ---- photo uploads ----
-['hero', 'mid', 'low', 'far'].forEach((key) => {
-  const input = $(`photo-${key}`);
-  if (!input) return;
-  input.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const img = await imageFromUrl(URL.createObjectURL(file));
-      await placePhoto(key, img, file.name);
-    } catch {
-      statusEl.textContent = 'That file could not be read as a photo.';
+/** Exports every size, one download after another. */
+function exportAllSizes() {
+  const keys = Object.keys(SIZES);
+  let i = 0;
+  const step = () => {
+    if (i >= keys.length) {
+      say(`Saved all ${keys.length} sizes.`);
+      return;
     }
-  });
-});
+    exportSize(keys[i]);
+    i += 1;
+    setTimeout(step, 350);
+  };
+  step();
+}
 
-$('use-one').addEventListener('change', (e) => {
-  const hero = state.photos.hero;
-  if (e.target.checked && hero) {
-    ['mid', 'low', 'far'].forEach((k) => { state.photos[k] = { ...hero }; });
-    statusEl.textContent = 'One photo now fills every panel — uncheck to give panels their own photos.';
-  }
-  repaint();
-});
+// Photo slots.
+for (let i = 0; i < 3; i++) {
+  const input = document.getElementById(`photo${i + 1}`);
+  if (input) input.addEventListener('change', (e) => setPhoto(i, e.target.files[0]));
+}
 
-document.querySelectorAll('[data-sample]').forEach((b) => {
-  b.addEventListener('click', async () => {
-    try {
-      const img = await imageFromUrl(`samples/${b.dataset.sample}.jpg`);
-      await placePhoto('hero', img, `${b.dataset.sample}.jpg (sample)`);
-      if ($('use-one').checked) {
-        ['mid', 'low', 'far'].forEach((k) => { state.photos[k] = { ...state.photos.hero }; });
-      }
-      repaint();
-    } catch {
-      statusEl.textContent = 'Sample photo failed to load.';
-    }
-  });
-});
-
-// ---- crop controls ----
-document.querySelectorAll('[data-panel-tab]').forEach((b) => {
-  b.addEventListener('click', () => {
-    activePanel = b.dataset.panelTab;
-    syncCropUI();
-  });
-});
-['zoom', 'focusX', 'focusY'].forEach((id) => $(id).addEventListener('input', readCropUI));
-$('face-btn').addEventListener('click', async () => {
-  const shot = shotFor(activePanel);
-  if (!shot) {
-    statusEl.textContent = 'Load a photo into this panel first.';
-    return;
-  }
-  statusEl.textContent = 'Looking for a face…';
-  const face = await findFace(shot.img);
-  if (face) {
-    shot.face = face;
-    shot.fx = face.fx;
-    shot.fy = face.fy;
-    shot.zoom = Math.max(shot.zoom, 1.45);
-    syncCropUI();
-    repaint();
-    statusEl.textContent = 'Face found — crop centred on it.';
-  } else {
-    statusEl.textContent = 'No face detected in this browser — use the focus sliders to frame it by hand.';
-  }
-});
-$('auto-face').addEventListener('change', (e) => { autoFace = e.target.checked; });
-
-// ---- layout + grade chips ----
-const layoutBox = $('layouts');
-Object.entries(LAYOUTS).forEach(([key, def]) => {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'chip';
-  b.textContent = def.label;
-  b.addEventListener('click', () => {
-    state.layout = key;
-    layoutBox.querySelectorAll('.chip').forEach((c) => c.classList.remove('on'));
-    b.classList.add('on');
+// Text fields: typing repaints live.
+function bindTextField(id, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    state[key] = el.value;
     repaint();
   });
-  if (key === state.layout) b.classList.add('on');
-  layoutBox.appendChild(b);
-});
+}
+bindTextField('title', 'title');
+bindTextField('subtitle', 'subtitle');
+bindTextField('calloutA', 'calloutA');
+bindTextField('calloutB', 'calloutB');
+bindTextField('billing', 'billing');
 
-const gradeBox = $('grades');
-Object.entries(GRADES).forEach(([key, def]) => {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'chip grade-chip';
-  b.style.setProperty('--sw', `linear-gradient(135deg, ${def.stops[0]}, ${def.stops[2]}, ${def.stops[3]})`);
-  b.textContent = def.label;
-  b.addEventListener('click', () => {
-    state.grade = key;
-    gradeBox.querySelectorAll('.chip').forEach((c) => c.classList.remove('on'));
-    b.classList.add('on');
+// Zoom and focus sliders.
+function bindSlider(id, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    state[key] = Number(el.value);
     repaint();
   });
-  if (key === state.grade) b.classList.add('on');
-  gradeBox.appendChild(b);
-});
+}
+bindSlider('zoom', 'zoom');
+bindSlider('focusX', 'focusX');
+bindSlider('focusY', 'focusY');
 
-// ---- lettering ----
-$('title').addEventListener('input', (e) => { state.title = e.target.value; repaint(); });
-$('subtitle').addEventListener('input', (e) => { state.subtitle = e.target.value; repaint(); });
-$('billing').addEventListener('input', (e) => { state.billing = e.target.value; repaint(); });
-$('callout1').addEventListener('input', (e) => { state.callouts[0].text = e.target.value; repaint(); });
-$('callout2').addEventListener('input', (e) => { state.callouts[1].text = e.target.value; repaint(); });
-$('seal-toggle').addEventListener('change', (e) => { state.seal = e.target.checked; repaint(); });
-$('seal-text').addEventListener('input', (e) => { state.sealText = e.target.value; repaint(); });
-$('halftone').addEventListener('change', (e) => { state.halftone = e.target.checked; repaint(); });
-$('grain').addEventListener('change', (e) => { state.grain = e.target.checked; repaint(); });
+// Layout, grade and size rows.
+buildChoiceRow(
+  document.getElementById('layouts'),
+  LAYOUTS.map((v) => ({ value: v, label: LAYOUT_NAMES[v] })),
+  state.layout,
+  (v) => { state.layout = v; },
+);
+buildChoiceRow(
+  document.getElementById('grades'),
+  Object.keys(PALETTES).map((v) => ({ value: v, label: GRADE_NAMES[v] })),
+  state.grade,
+  (v) => { state.grade = v; },
+);
+buildChoiceRow(
+  document.getElementById('sizes'),
+  Object.keys(SIZES).map((v) => ({ value: v, label: v.replace('x', ' × ') })),
+  state.size,
+  (v) => { state.size = v; },
+);
 
-// ---- export ----
-const sizeSel = $('size');
-EXPORT_SIZES.forEach((s) => {
-  const o = document.createElement('option');
-  o.value = s.id;
-  o.textContent = s.label;
-  sizeSel.appendChild(o);
-});
-sizeSel.addEventListener('change', () => {
-  currentSize = EXPORT_SIZES.find((s) => s.id === sizeSel.value) || EXPORT_SIZES[0];
-  repaint();
-});
-$('export').addEventListener('click', () => savePNG(currentSize));
-$('export-all').addEventListener('click', () => {
-  EXPORT_SIZES.forEach((s, i) => setTimeout(() => savePNG(s), i * 350));
-  statusEl.textContent = 'Exporting all three sizes…';
-});
+// Export buttons.
+const exportBtn = document.getElementById('export');
+if (exportBtn) exportBtn.addEventListener('click', () => exportSize(state.size));
+const exportAllBtn = document.getElementById('exportAll');
+if (exportAllBtn) exportAllBtn.addEventListener('click', exportAllSizes);
 
-// Screenshot scenes (?shot=cover / ?shot=editor) and test hooks.
-window.__vice = { state, redraw: repaint, setPhoto: placePhoto, loadImage: imageFromUrl, exportPNG: savePNG, get size() { return currentSize; } };
-const shot = new URLSearchParams(location.search).get('shot');
+// Screenshot scenes, or the live editor.
+const params = new URLSearchParams(location.search);
+const shot = params.get('shot');
 if (shot) {
-  runShot(shot, new URLSearchParams(location.search), state, { loadImage: imageFromUrl, setPhoto: placePhoto, redraw: repaint, sizeSel });
+  runShot(shot, params, async (sample, text, slot) => {
+    const img = await loadImage(sample);
+    const at = slot ?? 0;
+    state.photos[at] = img;
+    state.faces[at] = await findFace(img);
+    state.title = text;
+    const titleEl = document.getElementById('title');
+    if (titleEl) titleEl.value = text;
+    markChoices();
+    repaint();
+  });
 } else {
-  syncCropUI();
+  // A sample photo so the first paint is never blank.
+  loadImage('samples/pier.jpg')
+    .then(async (img) => {
+      state.photos[0] = img;
+      state.faces[0] = await findFace(img);
+      repaint();
+    })
+    .catch(() => repaint());
+  markChoices();
   repaint();
 }
